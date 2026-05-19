@@ -100,6 +100,19 @@ is auto-detected via [sniffio](https://github.com/python-trio/sniffio),
 falling back to inspecting `sys.modules` (so a trio-only environment
 selects `"trio"`), and otherwise defaulting to `"asyncio"`.
 
+If you parametrize tests with anyio's pytest plugin (via the
+`anyio_backend` fixture), you can wire the parametrized backend into
+`TestClient` by adding an autouse fixture to your `conftest.py`:
+
+```python
+from starlette.testclient import make_anyio_backend_autouse_fixture
+
+_publish_anyio_backend = make_anyio_backend_autouse_fixture()
+```
+
+With this in place, `TestClient(app)` (no `backend=` kwarg) picks up the
+backend that anyio parametrized the test with.
+
 To run `Trio`, pass `backend="trio"`. For example:
 
 ```python

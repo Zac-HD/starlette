@@ -10,6 +10,7 @@ import warnings
 from collections.abc import Awaitable, Callable, Generator, Iterable, Mapping, MutableMapping, Sequence
 from concurrent.futures import Future
 from contextlib import AbstractContextManager
+from contextvars import ContextVar
 from types import GeneratorType
 from typing import (
     Any,
@@ -77,13 +78,20 @@ class _AsyncBackend(TypedDict):
     backend_options: dict[str, Any]
 
 
+_pytest_backend_cvar: ContextVar[str | None] = ContextVar("_pytest_backend_cvar", default=None)
+
+
 def _detect_async_backend() -> Literal["asyncio", "trio"]:
     """Detect which async backend to use for the blocking portal.
 
     Detection order:
     1. ``sniffio.current_async_library()`` — picks up the currently running
        async library, if there is one.
-    2. ``sys.modules`` inspection — if only one of ``trio`` / ``asyncio`` is
+    2. ``_pytest_backend_cvar`` — set by the autouse fixture exported as
+       ``starlette.testclient.pytest_anyio_backend_autouse``, which mirrors
+       anyio's parametrized ``anyio_backend_name`` fixture into a ContextVar
+       readable from sync test code.
+    3. ``sys.modules`` inspection — if only one of ``trio`` / ``asyncio`` is
        imported, use that one. If both (or neither) are imported, fall back
        to ``"asyncio"``.
     """
@@ -95,9 +103,47 @@ def _detect_async_backend() -> Literal["asyncio", "trio"]:
         if library in ("asyncio", "trio"):
             return library  # type: ignore[return-value]
 
+    pytest_backend = _pytest_backend_cvar.get()
+    if pytest_backend in ("asyncio", "trio"):
+        return pytest_backend  # type: ignore[return-value]
+
     if "trio" in sys.modules and "asyncio" not in sys.modules:
         return "trio"
     return "asyncio"
+
+
+@contextlib.contextmanager
+def _set_pytest_backend(backend: str | None) -> Generator[None, None, None]:
+    """Publish the parametrized anyio backend into ``_pytest_backend_cvar``."""
+    token = _pytest_backend_cvar.set(backend)
+    try:
+        yield
+    finally:
+        _pytest_backend_cvar.reset(token)
+
+
+def make_anyio_backend_autouse_fixture() -> Any:
+    """Return an autouse pytest fixture that publishes the active anyio
+    backend to the ``starlette.testclient`` ContextVar.
+
+    Add to a test module or ``conftest.py`` as e.g.::
+
+        from starlette.testclient import make_anyio_backend_autouse_fixture
+
+        _publish_anyio_backend = make_anyio_backend_autouse_fixture()
+
+    With this fixture in place, ``TestClient(app)`` (no ``backend=`` kwarg)
+    will pick up the backend that anyio's pytest plugin has parametrized
+    the test with.
+    """
+    import pytest
+
+    @pytest.fixture(autouse=True)
+    def _publish_anyio_backend(anyio_backend_name: str) -> Generator[None, None, None]:
+        with _set_pytest_backend(anyio_backend_name):
+            yield
+
+    return _publish_anyio_backend
 
 
 class _Upgrade(Exception):

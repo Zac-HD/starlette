@@ -72,14 +72,32 @@ def test_testclient_detects_backend() -> None:
     currently active async library via sniffio, falling back to inspecting
     ``sys.modules`` so that trio-only environments default to trio.
     """
-    client = TestClient(mock_service)
-    assert client.async_backend["backend"] == "asyncio"
+    from starlette.testclient import _pytest_backend_cvar
 
-    async def in_trio() -> str:
+    # Suppress the autouse fixture's cvar value so we exercise the sniffio
+    # and sys.modules detection paths directly.
+    token = _pytest_backend_cvar.set(None)
+    try:
         client = TestClient(mock_service)
-        return client.async_backend["backend"]
+        assert client.async_backend["backend"] == "asyncio"
 
-    assert trio.run(in_trio) == "trio"
+        async def in_trio() -> str:
+            client = TestClient(mock_service)
+            return client.async_backend["backend"]
+
+        assert trio.run(in_trio) == "trio"
+    finally:
+        _pytest_backend_cvar.reset(token)
+
+
+def test_testclient_picks_up_pytest_backend_cvar(anyio_backend_name: str) -> None:
+    """
+    The autouse fixture wired in ``tests/conftest.py`` publishes the
+    parametrized anyio backend into a ContextVar that ``TestClient``
+    consults when no explicit ``backend`` is given.
+    """
+    client = TestClient(mock_service)
+    assert client.async_backend["backend"] == anyio_backend_name
 
 
 def test_testclient_headers_behavior() -> None:

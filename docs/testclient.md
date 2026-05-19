@@ -95,7 +95,10 @@ client = TestClient(app, client=('localhost', 8000))
 These options are passed to `anyio.start_blocking_portal()`.
 See the [anyio documentation](https://anyio.readthedocs.io/en/stable/basics.html#backend-options)
 for more information about the accepted backend options.
-By default, `asyncio` is used with default options.
+When `backend` is not specified (the default), the active async library
+is auto-detected via [sniffio](https://github.com/python-trio/sniffio),
+falling back to inspecting `sys.modules` (so a trio-only environment
+selects `"trio"`), and otherwise defaulting to `"asyncio"`.
 
 To run `Trio`, pass `backend="trio"`. For example:
 

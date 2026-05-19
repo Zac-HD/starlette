@@ -23,6 +23,7 @@ from urllib.parse import unquote, urljoin
 import anyio
 import anyio.abc
 import anyio.from_thread
+import sniffio
 from anyio.streams.stapled import StapledObjectStream
 
 from starlette._utils import is_async_callable
@@ -74,6 +75,29 @@ class _WrapASGI2:
 class _AsyncBackend(TypedDict):
     backend: str
     backend_options: dict[str, Any]
+
+
+def _detect_async_backend() -> Literal["asyncio", "trio"]:
+    """Detect which async backend to use for the blocking portal.
+
+    Detection order:
+    1. ``sniffio.current_async_library()`` — picks up the currently running
+       async library, if there is one.
+    2. ``sys.modules`` inspection — if only one of ``trio`` / ``asyncio`` is
+       imported, use that one. If both (or neither) are imported, fall back
+       to ``"asyncio"``.
+    """
+    try:
+        library = sniffio.current_async_library()
+    except sniffio.AsyncLibraryNotFoundError:
+        pass
+    else:
+        if library in ("asyncio", "trio"):
+            return library  # type: ignore[return-value]
+
+    if "trio" in sys.modules and "asyncio" not in sys.modules:
+        return "trio"
+    return "asyncio"
 
 
 class _Upgrade(Exception):
@@ -376,13 +400,15 @@ class TestClient(httpx.Client):
         base_url: str = "http://testserver",
         raise_server_exceptions: bool = True,
         root_path: str = "",
-        backend: Literal["asyncio", "trio"] = "asyncio",
+        backend: Literal["asyncio", "trio"] | None = None,
         backend_options: dict[str, Any] | None = None,
         cookies: httpx._types.CookieTypes | None = None,
         headers: dict[str, str] | None = None,
         follow_redirects: bool = True,
         client: tuple[str, int] = ("testclient", 50000),
     ) -> None:
+        if backend is None:
+            backend = _detect_async_backend()
         self.async_backend = _AsyncBackend(backend=backend, backend_options=backend_options or {})
         if _is_asgi3(app):
             asgi_app = app

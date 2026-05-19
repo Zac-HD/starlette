@@ -66,6 +66,22 @@ def test_use_testclient_in_endpoint(test_client_factory: TestClientFactory) -> N
     assert response.json() == {"mock": "example"}
 
 
+def test_testclient_detects_backend() -> None:
+    """
+    When ``backend`` is not specified, the TestClient should detect the
+    currently active async library via sniffio, falling back to inspecting
+    ``sys.modules`` so that trio-only environments default to trio.
+    """
+    client = TestClient(mock_service)
+    assert client.async_backend["backend"] == "asyncio"
+
+    async def in_trio() -> str:
+        client = TestClient(mock_service)
+        return client.async_backend["backend"]
+
+    assert trio.run(in_trio) == "trio"
+
+
 def test_testclient_headers_behavior() -> None:
     """
     We should be able to use the test client with user defined headers.
